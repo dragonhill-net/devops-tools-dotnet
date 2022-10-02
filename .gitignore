@@ -1,0 +1,9 @@
+/.idea/
+/.vs/
+/releases/
+
+[oO]bj/
+[bB]in/
+.local/
+
+*.user
