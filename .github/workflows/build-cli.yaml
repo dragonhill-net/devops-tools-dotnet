@@ -50,6 +50,6 @@ jobs:
         
       - if: github.ref == 'refs/heads/release'
         name: publish the nuget package
-        run: nuget push -ApiKey ${{ secrets.NUGET_API_KEY }} ./releases/Dragonhill.DevOps.Cli.${{ steps.gitversion.outputs.semVer }}.nupkg
+        run: nuget push -Source https://api.nuget.org/v3/index.json -ApiKey ${{ secrets.NUGET_API_KEY }} ./releases/Dragonhill.DevOps.Cli.${{ steps.gitversion.outputs.semVer }}.nupkg
         
           
