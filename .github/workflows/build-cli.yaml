@@ -1,0 +1,55 @@
+name: build the devops cli
+on:
+  - push
+
+jobs:
+  build-devops-cli:
+    runs-on: ubuntu-latest
+    
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      DOTNET_NOLOGO: true
+      
+    steps:
+      - if: github.ref == 'refs/heads/release'
+        name: install GitVersion
+        uses: GitTools/actions/gitversion/setup@v0.9.13
+        with:
+          versionSpec: '5.x'
+        
+      - name: checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          
+      - if: github.ref == 'refs/heads/release'
+        name: calculate version
+        id: gitversion
+        uses: GitTools/actions/gitversion/execute@v0.9.13
+        with:
+          useConfigFile: true
+          
+      - if: github.ref == 'refs/heads/release'
+        name: set the version tag if on release branch
+        run: |
+          git tag v${{ steps.gitversion.outputs.semVer }}
+          git push origin v${{ steps.gitversion.outputs.semVer }}
+          
+      - name: setup dotnet
+        uses: actions/setup-dotnet@v3.0.0
+        with:
+          dotnet-version: 6.x
+          
+      - name: run nuget restore
+        working-directory: ./src/Dragonhill.DevOps.Cli
+        run: dotnet restore
+          
+      - name: build the cli package
+        working-directory: ./src/Dragonhill.DevOps.Cli
+        run: dotnet msbuild -property:Configuration=Release -t:pack
+        
+      - if: github.ref == 'refs/heads/release'
+        name: publish the nuget package
+        run: nuget push -ApiKey ${{ secrets.NUGET_API_KEY }} ./releases/Dragonhill.DevOps.Cli.${{ steps.gitversion.outputs.semVer }}.nupkg
+        
+          

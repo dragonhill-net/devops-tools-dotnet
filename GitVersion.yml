@@ -1,0 +1,21 @@
+major-version-bump-message: '\+semver:\s?(breaking|major)'
+minor-version-bump-message: '\+semver:\s?(feat|minor)'
+patch-version-bump-message: '\+semver:\s?(fix|patch)'
+commit-message-incrementing: Enabled
+mode: ContinuousDelivery
+
+branches:
+  release:
+    regex: ^release$
+    mode: ContinuousDelivery
+    tag: ''
+    source-branches: [ 'develop' ]
+    tracks-release-branches: false
+    is-release-branch: true
+  develop:
+    regex: ^dev$
+    mode: ContinuousDelivery
+    tag: pre
+    source-branches: []
+    tracks-release-branches: true
+    is-release-branch: false
