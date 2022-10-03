@@ -1,6 +1,6 @@
 major-version-bump-message: '\+semver:\s?(breaking|major)'
 minor-version-bump-message: '\+semver:\s?(feat|minor)'
-patch-version-bump-message: '\+semver:\s?(fix|patch)'
+patch-version-bump-message: '\+semver:\s?(fix|patch|bug)'
 commit-message-incrementing: Enabled
 mode: ContinuousDelivery
 
