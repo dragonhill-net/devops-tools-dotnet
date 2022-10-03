@@ -80,7 +80,7 @@ public class MetadataPackager : IDisposable
 
         Directory.CreateDirectory(_outputDirectory);
 
-        var packagePath = Path.Combine(_outputDirectory, _version.ToString());
+        var packagePath = Path.Combine(_outputDirectory, $"{_config.Nuget.PackageName}.{_version.ToString()}.nupkg");
         using(var fileStream = File.OpenWrite(packagePath))
         {
             builder.Save(fileStream);
