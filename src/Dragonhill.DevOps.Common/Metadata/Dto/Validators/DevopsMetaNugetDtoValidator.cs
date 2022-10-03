@@ -14,5 +14,11 @@ public class DevopsMetaNugetDtoValidator : AbstractValidator<DevopsMetaNugetDto>
 
         RuleForEach(x => x.Authors)
             .NotEmpty();
+
+        RuleFor(x => x.RepositoryType)
+            .NotEmpty();
+
+        RuleFor(x => x.RepositoryUrl)
+            .NotEmpty();
     }
 }

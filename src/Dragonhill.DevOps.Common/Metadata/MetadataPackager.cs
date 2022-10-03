@@ -68,6 +68,11 @@ public class MetadataPackager : IDisposable
                 PackageTypes = new List<PackageType>
                     {
                         new("Dragonhill.Devops.Meta", new Version(0,1))
+                    },
+                Repository = new RepositoryMetadata
+                    {
+                        Type = _config.Nuget.RepositoryType,
+                        Url = _config.Nuget.RepositoryUrl
                     }
             };
 
