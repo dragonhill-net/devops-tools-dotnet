@@ -63,7 +63,7 @@ public class MetadataPackager : IDisposable
         var builder = new PackageBuilder
             {
                 Id = _config.Nuget.PackageName,
-                Version = new NuGetVersion(0, 0, 1),
+                Version = _version,
                 Description = "Containing build metadata in a custom nuget package format",
                 PackageTypes = new List<PackageType>
                     {
