@@ -1,0 +1,210 @@
+using Dragonhill.DevOps.Metadata.Dto;
+using Dragonhill.DevOps.Metadata.Dto.Validators;
+using Dragonhill.DevOps.Metadata.Settings;
+using Dragonhill.DevOps.Metadata.Settings.Validators;
+using NuGet.Common;
+using NuGet.Protocol;
+using NuGet.Protocol.Core.Types;
+using System.IO.Compression;
+using System.Text;
+using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
+
+namespace Dragonhill.DevOps.Metadata;
+
+public class MetadataDownloader : IDisposable
+{
+    private readonly string _rootDirectory;
+
+    private readonly ClientDevopsMetaSettings _metaSettings;
+
+    private readonly IDeserializer _deserializer = new DeserializerBuilder()
+        .WithNamingConvention(CamelCaseNamingConvention.Instance)
+        .Build();
+
+    private readonly LanguagePackageMetadataValidator _validator = new();
+
+    private FileStream? _fileStream;
+
+    public MetadataDownloader(string rootDirectory)
+    {
+        _rootDirectory = rootDirectory;
+
+        var settingsPath = Path.Combine(rootDirectory, ".config", "devops.yaml");
+        if (!File.Exists(settingsPath))
+        {
+            throw new DirectoryNotFoundException($"Required settings file not found: '{settingsPath}'");
+        }
+
+        var settings = _deserializer.Deserialize<ClientDevopsSettings>(File.ReadAllText(settingsPath));
+
+        var validationResult = new ClientDevopsSettingsValidator().Validate(settings);
+        if (!validationResult.IsValid)
+        {
+            throw new InvalidOperationException($"Settings file ('{settingsPath}') validation error: {validationResult}");
+        }
+
+        _metaSettings = settings.Meta ?? throw new InvalidOperationException($"Settings file ('{settingsPath}') must contain a meta section");
+    }
+
+    public async Task Apply()
+    {
+        try
+        {
+            var cache = new SourceCacheContext();
+            var repository = Repository.Factory.GetCoreV3(_metaSettings.RepositoryUrl);
+            var metadataResource = await repository.GetResourceAsync<MetadataResource>();
+            var version = await metadataResource.GetLatestVersion(_metaSettings.Package, _metaSettings.UsePrerelease, false, cache, new NullLogger(), CancellationToken.None);
+
+            if (version == null)
+            {
+                throw new InvalidOperationException("Package not found");
+            }
+
+            var findPackageResource = await repository.GetResourceAsync<FindPackageByIdResource>();
+
+            _fileStream = new FileStream(Path.GetTempFileName(), FileMode.Create, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.RandomAccess | FileOptions.DeleteOnClose);
+
+            await findPackageResource.CopyNupkgToStreamAsync(_metaSettings.Package, version, _fileStream, cache, new NullLogger(), CancellationToken.None);
+
+            _fileStream.Seek(0, SeekOrigin.Begin);
+        }
+        catch (Exception exception)
+        {
+            throw new InvalidOperationException($"Error downloading meta nuget package '{_metaSettings.Package}' from '{_metaSettings.RepositoryUrl}'", exception);
+        }
+
+        await ApplyPackage();
+    }
+
+    private async Task ApplyPackage()
+    {
+        using var archive = new ZipArchive(_fileStream!);
+
+        SortedDictionary<string, LanguagePackageMetadata> languages = new();
+
+        void LoadDependantLanguages(LanguagePackageMetadata languageMetadata, string rootLanguage)
+        {
+            foreach (var dependantLanguage in languageMetadata.DependantLanguages)
+            {
+                if (languages.ContainsKey(dependantLanguage))
+                {
+                    continue;
+                }
+
+                var innerLanguageMetadata = LoadLanguage(archive, dependantLanguage, rootLanguage);
+                languages.TryAdd(innerLanguageMetadata.CanonicalExtension, innerLanguageMetadata);
+                LoadDependantLanguages(innerLanguageMetadata, rootLanguage);
+            }
+        }
+
+        foreach (var language in _metaSettings.Languages)
+        {
+            var languageMetadata = LoadLanguage(archive, language, null);
+
+            if (language != languageMetadata.CanonicalExtension)
+            {
+                throw new InvalidOperationException($"Invalid package: Language '{language}' was not stored as the canonical extension '{languageMetadata.CanonicalExtension}'");
+            }
+
+            languages.TryAdd(languageMetadata.CanonicalExtension, languageMetadata);
+        }
+
+        foreach (var language in _metaSettings.Languages)
+        {
+            LoadDependantLanguages(languages[language], language);
+        }
+
+        // Apply features
+        await ApplyEditorconfig(archive, languages);
+        await ApplyGitignore(archive, languages);
+    }
+
+    private async Task ApplyEditorconfig(ZipArchive archive, IReadOnlyDictionary<string, LanguagePackageMetadata> languages)
+    {
+        await using var output = File.Open(Path.Combine(_rootDirectory, ".editorconfig"), FileMode.Create);
+
+        string GlobalHeader() => "# Automatically generated by Dragonhill.DevOps.Tool - do not edit manually!\nroot = true\n";
+        string DefaultHeader() => "\n[*]\n";
+        string LanguageHeader(LanguagePackageMetadata languageMetadata) => $"\n# Language config for .{languageMetadata.CanonicalExtension}\n[*.{(languageMetadata.Extensions.Count > 1 ? $"{{{string.Join(',', languageMetadata.Extensions)}}}" : languageMetadata.Extensions.First())}]\n";
+
+        await ApplyGenericFileBasedFeature(archive, languages, output, Filetypes.Editorconfig, true, GlobalHeader, DefaultHeader, LanguageHeader);
+    }
+
+    private async Task ApplyGitignore(ZipArchive archive, IReadOnlyDictionary<string, LanguagePackageMetadata> languages)
+    {
+        await using var output = File.Open(Path.Combine(_rootDirectory, ".gitignore"), FileMode.Create);
+
+        string GlobalHeader() => "# Automatically generated by Dragonhill.DevOps.Tool - do not edit manually!\n";
+        string DefaultHeader() => "\n# Generic section\n";
+        string LanguageHeader(LanguagePackageMetadata languageMetadata) => $"\n#Language section for .{languageMetadata.Extensions.First()}\n";
+
+        await ApplyGenericFileBasedFeature(archive, languages, output, Filetypes.Gitignore, true, GlobalHeader, DefaultHeader, LanguageHeader);
+    }
+
+    private static async Task ApplyGenericFileBasedFeature(ZipArchive archive, IReadOnlyDictionary<string, LanguagePackageMetadata> languages, Stream output, string filename, bool hasDefault, Func<string> globalHeader, Func<string> defaultHeader, Func<LanguagePackageMetadata, string> languageHeader)
+    {
+        await output.WriteAsync(Encoding.UTF8.GetBytes(globalHeader()));
+
+        if (hasDefault)
+        {
+            var defaultFeatureFile = archive.GetEntry(Path.Join("metadata", "languages", filename));
+
+            if (defaultFeatureFile != null)
+            {
+                await output.WriteAsync(Encoding.UTF8.GetBytes(defaultHeader()));
+                await defaultFeatureFile.Open().CopyToAsync(output);
+            }
+        }
+
+        foreach (var (language, languageMetadata) in languages)
+        {
+            var languageFeatureFile = archive.GetEntry(Path.Join("metadata", "languages", language, filename));
+
+            if (languageFeatureFile == null)
+            {
+                continue;
+            }
+
+            await output.WriteAsync(Encoding.UTF8.GetBytes(languageHeader(languageMetadata)));
+            await languageFeatureFile.Open().CopyToAsync(output);
+        }
+    }
+
+    private LanguagePackageMetadata LoadLanguage(ZipArchive archive, string language, string? rootLanguage)
+    {
+        var archiveEntry = archive.GetEntry(Path.Join("metadata", "languages", language, ".meta.yaml"));
+
+        if (archiveEntry == null)
+        {
+            throw new InvalidOperationException($"Language '{language}' metadata not found in package.{(rootLanguage != null ? $" This is a dependant language of '{rootLanguage}.'" : string.Empty)}");
+        }
+
+        LanguagePackageMetadata metadata;
+
+        try
+        {
+            using var reader = new StreamReader(archiveEntry.Open());
+
+            metadata = _deserializer.Deserialize<LanguagePackageMetadata>(reader);
+        }
+        catch (Exception exception)
+        {
+            throw new FormatException($"Packaged language metadata for '{language}' is invalid", exception);
+        }
+
+        var validationResult = _validator.Validate(metadata);
+        if (!validationResult.IsValid)
+        {
+            throw new InvalidOperationException($"Packaged language metadata for '{language}' does not validate correctly: {validationResult}");
+        }
+
+        return metadata;
+
+    }
+
+    public void Dispose()
+    {
+        _fileStream?.Dispose();
+    }
+}

@@ -9,6 +9,14 @@ public static class MetadataCommands
     {
         var command = new Command("metadata", "Commands supporting devops metadata creation and management");
 
+        command.AddCommand(CreateCreatePackageCommand());
+        command.AddCommand(CreateApplyCommand());
+        
+        return command;
+    }
+
+    private static Command CreateCreatePackageCommand()
+    {
         var createPackageCommand = new Command("create-package", "Creates a metadata nuget package");
         
         var createPackageVersionArgument = new Argument<string>("version", "The package version to be created");
@@ -29,8 +37,27 @@ public static class MetadataCommands
             metadataPackager.Run();
             
         }, createPackageVersionArgument, createPackageRootPathOption, createPackageOutputOption);
-        command.AddCommand(createPackageCommand);
+
+        return createPackageCommand;
+    }
+
+    private static Command CreateApplyCommand()
+    {
+        var applyCommand = new Command("apply", "Applies a metadata nuget package");
         
-        return command;
+        var applyRootPathOption = new Option<DirectoryInfo?>("--root-path", () => null, "The root directory (default to current directory)");
+        applyCommand.AddOption(applyRootPathOption);
+        
+        applyCommand.SetHandler(async (rootPathArgument) =>
+        {
+            var rootPath = rootPathArgument?.FullName ?? Directory.GetCurrentDirectory();
+
+            using var metadataDownloader = new MetadataDownloader(rootPath);
+            
+            await metadataDownloader.Apply();
+
+        }, applyRootPathOption);
+
+        return applyCommand;
     }
 }
