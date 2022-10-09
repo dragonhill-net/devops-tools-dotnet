@@ -24,7 +24,7 @@ public class MetadataPackager : IDisposable
     private readonly IDeserializer _deserializer = new DeserializerBuilder()
         .WithNamingConvention(CamelCaseNamingConvention.Instance)
         .Build();
-    
+
     private readonly ISerializer _serializer = new SerializerBuilder()
         .WithNamingConvention(CamelCaseNamingConvention.Instance)
         .Build();
@@ -80,7 +80,7 @@ public class MetadataPackager : IDisposable
         {
             builder.Authors.Add(author);
         }
-        
+
         builder.AddFiles(_tempDirectory.RootPath, Path.Join(_tempDirectory.RootPath, "**"), NugetOutputDir);
 
         Directory.CreateDirectory(_outputDirectory);
@@ -90,7 +90,7 @@ public class MetadataPackager : IDisposable
         {
             builder.Save(fileStream);
         }
-        
+
         Console.WriteLine($"Package written to: {packagePath}");
     }
 
@@ -102,23 +102,23 @@ public class MetadataPackager : IDisposable
         {
             throw new DirectoryNotFoundException($"Required languages subdirectory not found: '{languagesSubdirectory}'");
         }
-        
+
         var languagesTempPath = Path.Combine(_tempDirectory.RootPath, "languages");
         Directory.CreateDirectory(languagesTempPath);
-        
+
         CopyGitignorePartial(languagesSubdirectory, languagesTempPath);
         CopyEditorconfigPartial(languagesSubdirectory, languagesTempPath, "*");
 
         var languageDirectories = Directory.GetDirectories(languagesSubdirectory);
 
-        Dictionary<string, LanguageOutputMetadata> languageMetadataDict = new(languageDirectories.Length);
+        Dictionary<string, LanguagePackageMetadata> languageMetadataDict = new(languageDirectories.Length);
 
         foreach (var languageDirectory in languageDirectories)
         {
             var languageMetadata = ParseLanguage(languageDirectory, languagesTempPath);
             languageMetadataDict.Add(languageMetadata.CanonicalExtension, languageMetadata);
         }
-        
+
         //Validate dependencies
         foreach (var languageMetadata in languageMetadataDict.Values)
         {
@@ -132,10 +132,10 @@ public class MetadataPackager : IDisposable
         }
     }
 
-    private LanguageOutputMetadata ParseLanguage(string languageDirectory, string languagesTempRoot)
+    private LanguagePackageMetadata ParseLanguage(string languageDirectory, string languagesTempRoot)
     {
         var language = Path.GetFileName(languageDirectory);
-            
+
         if (!LanguageRegex.IsMatch(language))
         {
             throw new InvalidOperationException($"The language folder '{language}' is not in the pattern format '{LanguageRegex}'");
@@ -155,7 +155,7 @@ public class MetadataPackager : IDisposable
             }
         }
 
-        LanguageOutputMetadata languageOutputMetadata = new(language, languageMetaInput);
+        LanguagePackageMetadata languagePackageMetadata = new(language, languageMetaInput);
 
         var languageTempPath = Path.Combine(languagesTempRoot, language);
         Directory.CreateDirectory(languageTempPath);
@@ -166,9 +166,9 @@ public class MetadataPackager : IDisposable
         var languageMetadataFilePath = Path.Join(languageTempPath, LanguageMetadataFilename);
         using var writer = File.OpenWrite(languageMetadataFilePath);
         using var textWriter = new StreamWriter(writer);
-        _serializer.Serialize(textWriter, languageOutputMetadata);
+        _serializer.Serialize(textWriter, languagePackageMetadata);
 
-        return languageOutputMetadata;
+        return languagePackageMetadata;
     }
 
     private static void CopyGitignorePartial(string sourceDirectory, string targetDirectory)
@@ -186,8 +186,8 @@ public class MetadataPackager : IDisposable
         if (File.Exists(sourceEditorconfigPath))
         {
             var targetEditorconfigPath = Path.Combine(targetDirectory, Filetypes.Editorconfig);
-            File.Copy(sourceEditorconfigPath, targetEditorconfigPath);
-            EditorconfigValidator.Validate(targetEditorconfigPath, expectedLanguage);
+            var result = EditorconfigValidator.ValidateAndRemoveHeader(sourceEditorconfigPath, expectedLanguage);
+            File.WriteAllText(targetEditorconfigPath, result);
         }
     }
 

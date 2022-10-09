@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Dragonhill.DevOps.Helpers;
@@ -6,17 +7,21 @@ public static class EditorconfigValidator
 {
     private static readonly Regex RootRegex = new(@"^root\s*=\s*true$", RegexOptions.Compiled);
 
-    public static void Validate(string path, string expectedLanguage)
+    public static string ValidateAndRemoveHeader(string path, string expectedLanguage)
     {
+        StringBuilder result = new();
+
         var languageSpecificationFound = false;
-        
+
         foreach (var rawLine in File.ReadLines(path))
         {
             var line = rawLine.Trim();
 
             if (line.Length == 0 || line[0] == '#')
             {
-                return;
+                result.AppendLine(line);
+
+                continue;
             }
 
             if (line[0] == '[')
@@ -25,7 +30,7 @@ public static class EditorconfigValidator
                 {
                     throw new FormatException($"Only a single language specification is allowed in '{path}'");
                 }
-            
+
                 if (line[^1] != ']')
                 {
                     throw new FormatException($"Invalid language specification in '{path}': '{line}'");
@@ -37,6 +42,8 @@ public static class EditorconfigValidator
                 }
 
                 languageSpecificationFound = true;
+
+                continue;
             }
 
             if (RootRegex.IsMatch(line))
@@ -48,6 +55,10 @@ public static class EditorconfigValidator
             {
                 throw new FormatException($"Found content before language specification in '{path}'");
             }
+
+            result.AppendLine(line);
         }
+
+        return result.ToString();
     }
 }
